@@ -10,7 +10,7 @@ clear
 
 # AK Kernel Version
 BASE_AK_VER="AK"
-VER=".355.gee-cm"
+VER=".360.gee.cm"
 AK_VER=$BASE_AK_VER$VER
 
 # AK Variables
@@ -43,7 +43,7 @@ echo -e "${restore}"
 
 MODULES_DIR=${HOME}/kernel/AK-Mako-AnyKernel/cwm/system/lib/modules
 KERNEL_DIR=`pwd`
-OUTPUT_DIR=${HOME}/kernel/AK-Mako-AnyKernel/zip
+OUTPUT_DIR=${HOME}/kernel/AK-Mako-AnyKernel
 CWM_DIR=${HOME}/kernel/AK-Mako-AnyKernel/cwm
 ZIMAGE_DIR=${HOME}/kernel/AK-GEE/arch/arm/boot
 CWM_MOVE=${HOME}/kernel/AK-releases
