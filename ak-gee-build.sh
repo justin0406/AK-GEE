@@ -15,7 +15,7 @@ AK_VER=$BASE_AK_VER$VER
 
 # AK Variables
 export LOCALVERSION="~"`echo $AK_VER`
-export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.2-2014.09/bin/arm-cortex_a15-linux-gnueabihf-
+export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.2-2014.10/bin/arm-cortex_a15-linux-gnueabihf-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=Justin
