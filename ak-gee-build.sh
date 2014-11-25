@@ -10,7 +10,7 @@ clear
 
 # AK Kernel Version
 BASE_AK_VER="AK"
-VER=".360.gee.aosp"
+VER=".500.gee.aosp"
 AK_VER=$BASE_AK_VER$VER
 
 # AK Variables
@@ -69,7 +69,7 @@ echo "-------------------------"
 echo -e "${restore}"
 
 make "gee_defconfig"
-make -j9
+make -j4
 
 echo -e "${green}"
 echo "--------------------------"
@@ -118,3 +118,4 @@ DATE_END=$(date +"%s")
 DIFF=$(($DATE_END - $DATE_START))
 echo "Time: $(($DIFF / 60)) minute(s) and $(($DIFF % 60)) seconds."
 echo
+
