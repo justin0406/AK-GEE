@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Add Colors to unhappiness
+# Bash Color
 green='\033[01;32m'
 red='\033[01;31m'
 blink_red='\033[05;31m'
@@ -8,110 +8,128 @@ restore='\033[0m'
 
 clear
 
-# AK Kernel Version
+# Resources
+THREAD="-j$(grep -c ^processor /proc/cpuinfo)"
+KERNEL="zImage"
+DEFCONFIG="ak_mako_defconfig"
+
+# Kernel Details
 BASE_AK_VER="AK"
-VER=".500.gee.aosp"
-AK_VER=$BASE_AK_VER$VER
+VER=".600.gee.aosp"
+AK_VER="$BASE_AK_VER$VER"
 
 # AK Variables
-export LOCALVERSION="~"`echo $AK_VER`
+export LOCALVERSION=~`echo $AK_VER`
 export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.2-2014.10/bin/arm-cortex_a15-linux-gnueabihf-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=Justin
 export KBUILD_BUILD_HOST="BuildBox"
 
+# Paths
+KERNEL_DIR=`pwd`
+REPACK_DIR="${HOME}/kernel/AK-Mako-AnyKernel"
+PATCH_DIR="${HOME}/kernel//AK-Mako-AnyKernel/patch"
+MODULES_DIR="${HOME}/kernel/AK-Mako-AnyKernel/patch/modules"
+ZIP_MOVE="${HOME}/kernel/AK-releases"
+ZIMAGE_DIR="${HOME}/kernel/AK-GEE/arch/arm/boot"
+
+# Functions
+function clean_all {
+		rm -rf $MODULES_DIR/*
+		cd $REPACK_DIR
+		rm -rf $KERNEL
+		git reset --hard > /dev/null 2>&1
+		git clean -f -d > /dev/null 2>&1
+		cd $KERNEL_DIR
+		echo
+		make clean && make mrproper
+}
+
+function make_kernel {
+		echo
+		make $DEFCONFIG
+		make $THREAD
+		cp -vr $ZIMAGE_DIR/$KERNEL $REPACK_DIR
+}
+
+function make_modules {
+		rm `echo $MODULES_DIR"/*"`
+		find $KERNEL_DIR -name '*.ko' -exec cp -v {} $MODULES_DIR \;
+}
+
+
+function make_zip {
+		cd $REPACK_DIR
+		zip -r9 `echo $AK_VER`.zip *
+		mv  `echo $AK_VER`.zip $ZIP_MOVE
+		cd $KERNEL_DIR
+}
+
+
 DATE_START=$(date +"%s")
 
-echo
 echo -e "${green}"
 echo "AK Kernel Creation Script:"
-echo "    _____                         "
-echo "   (, /  |              /)   ,    "
-echo "     /---| __   _   __ (/_     __ "
-echo "  ) /    |_/ (_(_(_/ (_/(___(_(_(_"
-echo " ( /                              "
-echo " _/                               "
+
+echo "---------------"
+echo "Kernel Version:"
+echo "---------------"
+
+echo -e "${red}"; echo -e "${blink_red}"; echo "$AK_VER"; echo -e "${restore}";
+
+echo -e "${green}"
+echo "-----------------"
+echo "Making AK Kernel:"
+echo "-----------------"
 echo -e "${restore}"
+
+while read -p "Do you want to clean stuffs (y/n)? " cchoice
+do
+case "$cchoice" in
+	y|Y )
+		clean_all
+		echo
+		echo "All Cleaned now."
+		break
+		;;
+	n|N )
+		break
+		;;
+	* )
+		echo
+		echo "Invalid try again!"
+		echo
+		;;
+esac
+done
+
 echo
 
-echo -e "${green}"
-echo "------------------------"
-echo "Show: AK gee Settings"
-echo "------------------------"
-echo -e "${restore}"
-
-MODULES_DIR=${HOME}/kernel/AK-Mako-AnyKernel/cwm/system/lib/modules
-KERNEL_DIR=`pwd`
-OUTPUT_DIR=${HOME}/kernel/AK-Mako-AnyKernel
-CWM_DIR=${HOME}/kernel/AK-Mako-AnyKernel/cwm
-ZIMAGE_DIR=${HOME}/kernel/AK-GEE/arch/arm/boot
-CWM_MOVE=${HOME}/kernel/AK-releases
-ZIMAGE_ANYKERNEL=${HOME}/kernel/AK-Mako-AnyKernel/cwm/kernel
-ANYKERNEL_DIR=${HOME}/kernel/AK-Mako-AnyKernel
-
-echo -e "${red}"; echo "COMPILING VERSION:"; echo -e "${blink_red}"; echo "$LOCALVERSION"; echo -e "${restore}"
-echo "CROSS_COMPILE="$CROSS_COMPILE
-echo "ARCH="$ARCH
-echo "MODULES_DIR="$MODULES_DIR
-echo "KERNEL_DIR="$KERNEL_DIR
-echo "OUTPUT_DIR="$OUTPUT_DIR
-echo "CWM_DIR="$CWM_DIR
-echo "ZIMAGE_DIR="$ZIMAGE_DIR
-echo "CWM_MOVE="$CWM_MOVE
-echo "ZIMAGE_ANYKERNEL="$ZIMAGE_ANYKERNEL
-echo "ANYKERNEL_DIR="$ANYKERNEL_DIR
+while read -p "Do you want to build kernel (y/n)? " dchoice
+do
+case "$dchoice" in
+	y|Y)
+		make_kernel
+		make_modules
+		make_zip
+		break
+		;;
+	n|N )
+		break
+		;;
+	* )
+		echo
+		echo "Invalid try again!"
+		echo
+		;;
+esac
+done
 
 echo -e "${green}"
-echo "-------------------------"
-echo "Making: AK gee Defconfig"
-echo "-------------------------"
-echo -e "${restore}"
-
-make "gee_defconfig"
-make -j4
-
-echo -e "${green}"
-echo "--------------------------"
-echo "Copy: Modules to direcroty"
-echo "--------------------------"
-echo -e "${restore}"
-
-rm `echo $MODULES_DIR"/*"`
-find $KERNEL_DIR -name '*.ko' -exec cp -v {} $MODULES_DIR \;
-echo
-
-echo -e "${green}"
-echo "----------------------------"
-echo "Create: Zip and moving files"
-echo "----------------------------"
-echo -e "${restore}"
-cp -vr $ZIMAGE_DIR/zImage $ZIMAGE_ANYKERNEL
-echo
-
-cd $CWM_DIR
-zip -r `echo $AK_VER`.zip *
-mv  `echo $AK_VER`.zip $OUTPUT_DIR
-
-echo -e "${green}"
-echo "-------------------------"
-echo "The End: AK is Born"
-echo "-------------------------"
-echo -e "${restore}"
-
-cp -vr $OUTPUT_DIR/`echo $AK_VER`.zip $CWM_MOVE
-echo
-
-cd $ANYKERNEL_DIR
-git reset --hard
-echo
-
-cd $KERNEL_DIR
-
-echo -e "${green}"
-echo "-------------------------"
+echo "-------------------"
 echo "Build Completed in:"
-echo "-------------------------"
+echo "-------------------"
 echo -e "${restore}"
 
 DATE_END=$(date +"%s")
