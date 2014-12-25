@@ -11,7 +11,7 @@ clear
 # Resources
 THREAD="-j$(grep -c ^processor /proc/cpuinfo)"
 KERNEL="zImage"
-DEFCONFIG="ak_mako_defconfig"
+DEFCONFIG="gee_defconfig"
 
 # Kernel Details
 BASE_AK_VER="AK"
@@ -20,7 +20,7 @@ AK_VER="$BASE_AK_VER$VER"
 
 # AK Variables
 export LOCALVERSION=~`echo $AK_VER`
-export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.2-2014.10/bin/arm-cortex_a15-linux-gnueabihf-
+export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.3-2014.12/bin/arm-cortex_a15-linux-gnueabihf-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=Justin
