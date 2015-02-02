@@ -20,19 +20,19 @@ AK_VER="$BASE_AK_VER$VER"
 
 # AK Variables
 export LOCALVERSION=~`echo $AK_VER`
-export CROSS_COMPILE=${HOME}/kernel/linaro/arm-cortex_a15-linux-gnueabihf-linaro_4.9.3-2014.12/bin/arm-cortex_a15-linux-gnueabihf-
+export CROSS_COMPILE=${HOME}/kernel/arm-cortex_a15-linux-gnueabihf-linaro_4.9/bin/arm-cortex_a15-linux-gnueabihf-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=Justin
-export KBUILD_BUILD_HOST="BuildBox"
+export KBUILD_BUILD_HOST=BuildBox
 
 # Paths
 KERNEL_DIR=`pwd`
-REPACK_DIR="${HOME}/kernel/AK-Mako-AnyKernel"
-PATCH_DIR="${HOME}/kernel//AK-Mako-AnyKernel/patch"
-MODULES_DIR="${HOME}/kernel/AK-Mako-AnyKernel/patch/modules"
-ZIP_MOVE="${HOME}/kernel/AK-releases"
-ZIMAGE_DIR="${HOME}/kernel/AK-GEE/arch/arm/boot"
+REPACK_DIR="${HOME}/kernel/GEE-AnyKernel"
+PATCH_DIR="${HOME}/kernel/GEE-AnyKernel/patch"
+MODULES_DIR="${HOME}/kernel/GEE-AnyKernel/patch/modules"
+ZIP_MOVE="${HOME}/kernel/AK/AK-releases/"
+ZIMAGE_DIR="${HOME}/kernel/AK/AK-GEE/arch/arm/boot"
 
 # Functions
 function clean_all {
@@ -70,7 +70,6 @@ function make_zip {
 DATE_START=$(date +"%s")
 
 echo -e "${green}"
-echo "AK Kernel Creation Script:"
 
 echo "---------------"
 echo "Kernel Version:"
@@ -80,7 +79,7 @@ echo -e "${red}"; echo -e "${blink_red}"; echo "$AK_VER"; echo -e "${restore}";
 
 echo -e "${green}"
 echo "-----------------"
-echo "Making AK Kernel:"
+echo "Making Kernel:"
 echo "-----------------"
 echo -e "${restore}"
 
