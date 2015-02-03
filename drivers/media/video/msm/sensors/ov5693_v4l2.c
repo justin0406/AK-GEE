@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,43 +8,744 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
  */
 
+#include <linux/module.h>
 #include "msm_sensor.h"
 #include "msm.h"
-#include <linux/gpio.h>
-#include <linux/regulator/consumer.h>
-#include <linux/mfd/pm8xxx/pm8921.h>
-#include <linux/proc_fs.h>
-#include <asm/mach-types.h>
-#include "ov5693_v4l2.h"
 
 #define SENSOR_NAME "ov5693"
 #define PLATFORM_DRIVER_NAME "msm_camera_ov5693"
 #define ov5693_obj ov5693_##obj
-/* Macros assume PMIC GPIOs and MPPs start at 1 */
-#define PM8921_GPIO_BASE		NR_GPIO_IRQS
-#define PM8921_GPIO_PM_TO_SYS(pm_gpio)	(pm_gpio - 1 + PM8921_GPIO_BASE)
-#define SENSOR_MAX_RETRIES      3 /* max counter for retry I2C access */
-#define OTP_LOAD_DUMP   0x3D81
-#define OTP_BANK_SELECT 0x3D84
-#define OTP_BANK_START  0x3D00
+
+#undef CDBG
+#define CDBG pr_err
 
 static struct msm_sensor_ctrl_t ov5693_s_ctrl;
-static struct msm_calib_af ov5693_af_position;
 
 DEFINE_MUTEX(ov5693_mut);
 
+static struct msm_camera_i2c_reg_conf ov5693_start_settings[] = {
+	{0x0100, 0x01},
+};
 
-static struct v4l2_subdev_info ov5693_subdev_info[] = {
-	{
-		.code   = V4L2_MBUS_FMT_SBGGR10_1X10,//V4L2_MBUS_FMT_SBGGR8_1X8,
-		.colorspace = V4L2_COLORSPACE_JPEG,
-		.fmt    = 1,
-		.order    = 0,
-	},
-	/* more can be supported, to be added later */
+static struct msm_camera_i2c_reg_conf ov5693_stop_settings[] = {
+	{0x0100, 0x00},
+};
+
+static struct msm_camera_i2c_reg_conf ov5693_groupon_settings[] = {
+	{0x3208, 0x0},
+};
+
+static struct msm_camera_i2c_reg_conf ov5693_groupoff_settings[] = {
+	{0x3208, 0x10},
+	{0x3208, 0xa0},
+};
+
+static struct msm_camera_i2c_reg_conf ov5693_recommend_settings[] = {
+#if 0 // from QCT Reference driver
+/* snapshot : 2592*1944 */
+	{0x0103, 0x01},
+	{0x3001, 0x0a},
+	{0x3002, 0x80},
+	{0x3006, 0x00},
+	{0x3011, 0x21},
+	{0x3012, 0x09},
+	{0x3013, 0x10},
+	{0x3014, 0x00},
+	{0x3015, 0x08},
+	{0x3016, 0xf0},
+	{0x3017, 0xf0},
+	{0x3018, 0xf0},
+	{0x301b, 0xb4},
+	{0x301d, 0x02},
+	{0x3021, 0x00}, // 0x00 : use internal LDO. 0x20 : use external regulator for DVDD
+	{0x3022, 0x01},
+	{0x3028, 0x44},
+	{0x3098, 0x03},
+	{0x3099, 0x1e},
+	{0x309a, 0x02},
+	{0x309b, 0x01},
+	{0x309c, 0x00},
+	{0x30a0, 0xd2},
+	{0x30a2, 0x01},
+	{0x30b2, 0x00},
+	{0x30b3, 0x64},
+	{0x30b4, 0x03},
+	{0x30b5, 0x04},
+	{0x30b6, 0x01},
+	{0x3104, 0x21},
+	{0x3106, 0x00},
+	{0x3400, 0x04},
+	{0x3401, 0x00},
+	{0x3402, 0x04},
+	{0x3403, 0x00},
+	{0x3404, 0x04},
+	{0x3405, 0x00},
+	{0x3406, 0x01},
+	{0x3500, 0x00},
+	{0x3501, 0x7b},
+	{0x3502, 0x00},
+	{0x3503, 0x07},
+	{0x3504, 0x00},
+	{0x3505, 0x00},
+	{0x3506, 0x00},
+	{0x3507, 0x02},
+	{0x3508, 0x00},
+	{0x3509, 0x10},
+	{0x350a, 0x00},
+	{0x350b, 0x40},
+	{0x3601, 0x0a},
+	{0x3602, 0x38},
+	{0x3612, 0x80},
+	{0x3620, 0x54},
+	{0x3621, 0xc7},
+	{0x3622, 0x0f},
+	{0x3625, 0x10},
+	{0x3630, 0x55},
+	{0x3631, 0xf4},
+	{0x3632, 0x00},
+	{0x3633, 0x34},
+	{0x3634, 0x02},
+	{0x364d, 0x0d},
+	{0x364f, 0xdd},
+	{0x3660, 0x04},
+	{0x3662, 0x10},
+	{0x3663, 0xf1},
+	{0x3665, 0x00},
+	{0x3666, 0x20},
+	{0x3667, 0x00},
+	{0x366a, 0x80},
+	{0x3680, 0xe0},
+	{0x3681, 0x00},
+	{0x3700, 0x42},
+	{0x3701, 0x14},
+	{0x3702, 0xa0},
+	{0x3703, 0xd8},
+	{0x3704, 0x78},
+	{0x3705, 0x02},
+	{0x3708, 0xe2},
+	{0x3709, 0xc3},
+	{0x370a, 0x00},
+	{0x370b, 0x20},
+	{0x370c, 0x0c},
+	{0x370d, 0x11},
+	{0x370e, 0x00},
+	{0x370f, 0x40},
+	{0x3710, 0x00},
+	{0x371a, 0x1c},
+	{0x371b, 0x05},
+	{0x371c, 0x01},
+	{0x371e, 0xa1},
+	{0x371f, 0x0c},
+	{0x3721, 0x00},
+	{0x3724, 0x10},
+	{0x3726, 0x00},
+	{0x372a, 0x01},
+	{0x3730, 0x10},
+	{0x3738, 0x22},
+	{0x3739, 0xe5},
+	{0x373a, 0x50},
+	{0x373b, 0x02},
+	{0x373c, 0x41},
+	{0x373f, 0x02},
+	{0x3740, 0x42},
+	{0x3741, 0x02},
+	{0x3742, 0x18},
+	{0x3743, 0x01},
+	{0x3744, 0x02},
+	{0x3747, 0x10},
+	{0x374c, 0x04},
+	{0x3751, 0xf0},
+	{0x3752, 0x00},
+	{0x3753, 0x00},
+	{0x3754, 0xc0},
+	{0x3755, 0x00},
+	{0x3756, 0x1a},
+	{0x3758, 0x00},
+	{0x3759, 0x0f},
+	{0x376b, 0x44},
+	{0x375c, 0x04},
+	{0x3774, 0x10},
+	{0x3776, 0x00},
+	{0x377f, 0x08},
+	{0x3780, 0x22},
+	{0x3781, 0x0c},
+	{0x3784, 0x2c},
+	{0x3785, 0x1e},
+	{0x378f, 0xf5},
+	{0x3791, 0xb0},
+	{0x3795, 0x00},
+	{0x3796, 0x64},
+	{0x3797, 0x11},
+	{0x3798, 0x30},
+	{0x3799, 0x41},
+	{0x379a, 0x07},
+	{0x379b, 0xb0},
+	{0x379c, 0x0c},
+	{0x37c5, 0x00},
+	{0x37c6, 0x00},
+	{0x37c7, 0x00},
+	{0x37c9, 0x00},
+	{0x37ca, 0x00},
+	{0x37cb, 0x00},
+	{0x37de, 0x00},
+	{0x37df, 0x00},
+/*
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x07},
+	{0x3807, 0xa3},
+	{0x3808, 0x0a},
+	{0x3809, 0x20},
+	{0x380a, 0x07},
+	{0x380b, 0x98},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+*/
+	{0x3810, 0x00},
+	{0x3811, 0x02},
+	{0x3812, 0x00},
+	{0x3813, 0x02},
+	{0x3814, 0x11},
+	{0x3815, 0x11},
+	{0x3820, 0x42}, //0x00 Flip and Mirror
+	{0x3821, 0x18}, //0x1e Flip and Mirror
+	{0x3823, 0x00},
+	{0x3824, 0x00},
+	{0x3825, 0x00},
+	{0x3826, 0x00},
+	{0x3827, 0x00},
+	{0x382a, 0x04},
+	{0x3a04, 0x06},
+	{0x3a05, 0x14},
+	{0x3a06, 0x00},
+	{0x3a07, 0xfe},
+	{0x3b00, 0x00},
+	{0x3b02, 0x00},
+	{0x3b03, 0x00},
+	{0x3b04, 0x00},
+	{0x3b05, 0x00},
+	{0x3e07, 0x20},
+	{0x4000, 0x08},
+	{0x4001, 0x04},
+	{0x4002, 0x45},
+	{0x4004, 0x08},
+	{0x4005, 0x18},
+	{0x4006, 0x20},
+	{0x4008, 0x24}, //0x24(QCT) 1a:blc always 18:default
+	{0x4009, 0x40},
+	{0x400c, 0x00},
+	{0x400d, 0x00},
+	{0x4058, 0x00},
+	{0x404e, 0x37},
+	{0x404f, 0x8f},
+	{0x4058, 0x00},
+	{0x4101, 0xb2},
+	{0x4303, 0x00},
+	{0x4304, 0x08},
+	{0x4307, 0x30},
+	{0x4311, 0x04},
+	{0x4315, 0x01},
+	{0x4511, 0x05},
+	{0x4512, 0x01},
+	{0x4806, 0x00},
+	{0x4816, 0x52},
+	{0x481f, 0x30},
+	{0x4826, 0x2c},
+	{0x4831, 0x64},
+	{0x4d00, 0x04},
+	{0x4d01, 0x71},
+	{0x4d02, 0xfd},
+	{0x4d03, 0xf5},
+	{0x4d04, 0x0c},
+	{0x4d05, 0xcc},
+	{0x4837, 0x0a},
+	{0x5000, 0x06},
+	{0x5001, 0x01},
+	{0x5002, 0x00},
+	{0x5003, 0x20},
+	{0x5046, 0x0a},
+	{0x5013, 0x00},
+	{0x5046, 0x0a},
+	{0x5780, 0x1c},
+	{0x5786, 0x20},
+	{0x5787, 0x10},
+	{0x5788, 0x18},
+	{0x578a, 0x04},
+	{0x578b, 0x02},
+	{0x578c, 0x02},
+	{0x578e, 0x06},
+	{0x578f, 0x02},
+	{0x5790, 0x02},
+	{0x5791, 0xff},
+	{0x5842, 0x01},
+	{0x5843, 0x2b},
+	{0x5844, 0x01},
+	{0x5845, 0x92},
+	{0x5846, 0x01},
+	{0x5847, 0x8f},
+	{0x5848, 0x01},
+	{0x5849, 0x0c},
+	{0x5e00, 0x00},
+	{0x5e10, 0x0c},
+#else
+// OV5693_Init_2592x1944_30fps_2lane
+	{0x0103, 0x01},
+	{0x3001, 0x0a},
+	{0x3002, 0x00},
+	{0x3006, 0x00},
+	{0x3011, 0x21},
+	{0x3012, 0x09},
+	{0x3013, 0x10},
+	{0x3014, 0x00},
+	{0x3015, 0x08},
+	{0x3016, 0xf0},
+	{0x3017, 0xf0},
+	{0x3018, 0xf0},
+	{0x301b, 0xb4},
+	{0x301d, 0x02},
+	{0x3021, 0x00}, // 0x00 : use internal LDO. 0x20 : use external regulator for DVDD
+	{0x3022, 0x01},
+	{0x3028, 0x44},
+	{0x3098, 0x03},
+	{0x3099, 0x1e},
+	{0x309a, 0x02},
+	{0x309b, 0x01},
+	{0x309c, 0x00},
+	{0x30a0, 0xd2},
+	{0x30a2, 0x01},
+	{0x30b2, 0x00},
+	{0x30b3, 0x64},
+	{0x30b4, 0x03},
+	{0x30b5, 0x04},
+	{0x30b6, 0x01},
+	{0x3104, 0x21},
+	{0x3106, 0x00},
+	{0x3400, 0x04},
+	{0x3401, 0x00},
+	{0x3402, 0x04},
+	{0x3403, 0x00},
+	{0x3404, 0x04},
+	{0x3405, 0x00},
+	{0x3406, 0x01},
+	{0x3500, 0x00},
+	{0x3501, 0x7b},
+	{0x3502, 0x00},
+	{0x3503, 0x07},
+	{0x3504, 0x00},
+	{0x3505, 0x00},
+	{0x3506, 0x00},
+	{0x3507, 0x02},
+	{0x3508, 0x00},
+	{0x3509, 0x10},
+	{0x350a, 0x00},
+	{0x350b, 0x40},
+	{0x3600, 0xbc},
+	{0x3601, 0x0a},
+	{0x3602, 0x38},
+	{0x3612, 0x80},
+	{0x3620, 0x44},
+	{0x3621, 0xb5},
+	{0x3622, 0x0c},
+	{0x3625, 0x10},
+	{0x3630, 0x55},
+	{0x3631, 0xf4},
+	{0x3632, 0x00},
+	{0x3633, 0x34},
+	{0x3634, 0x02},
+	{0x364d, 0x0d},
+	{0x364f, 0xdd},
+	{0x3660, 0x04},
+	{0x3662, 0x10},
+	{0x3663, 0xf1},
+	{0x3665, 0x00},
+	{0x3666, 0x20},
+	{0x3667, 0x00},
+	{0x366a, 0x80},
+	{0x3680, 0xe0},
+	{0x3681, 0x00},
+	{0x3700, 0x42},
+	{0x3701, 0x14},
+	{0x3702, 0xa0},
+	{0x3703, 0xd8},
+	{0x3704, 0x78},
+	{0x3705, 0x02},
+	{0x3708, 0xe2},
+	{0x3709, 0xc3},
+	{0x370a, 0x00},
+	{0x370b, 0x20},
+	{0x370c, 0x0c},
+	{0x370d, 0x11},
+	{0x370e, 0x00},
+	{0x370f, 0x40},
+	{0x3710, 0x00},
+	{0x371a, 0x1c},
+	{0x371b, 0x05},
+	{0x371c, 0x01},
+	{0x371e, 0xa1},
+	{0x371f, 0x0c},
+	{0x3721, 0x00},
+	{0x3724, 0x10},
+	{0x3726, 0x00},
+	{0x372a, 0x01},
+	{0x3730, 0x10},
+	{0x3738, 0x22},
+	{0x3739, 0xe5},
+	{0x373a, 0x50},
+	{0x373b, 0x02},
+	{0x373c, 0x41},
+	{0x373f, 0x02},
+	{0x3740, 0x42},
+	{0x3741, 0x02},
+	{0x3742, 0x18},
+	{0x3743, 0x01},
+	{0x3744, 0x02},
+	{0x3747, 0x10},
+	{0x374c, 0x04},
+	{0x3751, 0xf0},
+	{0x3752, 0x00},
+	{0x3753, 0x00},
+	{0x3754, 0xc0},
+	{0x3755, 0x00},
+	{0x3756, 0x1a},
+	{0x3758, 0x00},
+	{0x3759, 0x0f},
+	{0x376b, 0x44},
+	{0x375c, 0x04},
+	{0x3774, 0x10},
+	{0x3776, 0x00},
+	{0x377f, 0x08},
+	{0x3780, 0x22},
+	{0x3781, 0x0c},
+	{0x3784, 0x2c},
+	{0x3785, 0x1e},
+	{0x378f, 0xf5},
+	{0x3791, 0xb0},
+	{0x3795, 0x00},
+	{0x3796, 0x64},
+	{0x3797, 0x11},
+	{0x3798, 0x30},
+	{0x3799, 0x41},
+	{0x379a, 0x07},
+	{0x379b, 0xb0},
+	{0x379c, 0x0c},
+	{0x37c5, 0x00},
+	{0x37c6, 0x00},
+	{0x37c7, 0x00},
+	{0x37c9, 0x00},
+	{0x37ca, 0x00},
+	{0x37cb, 0x00},
+	{0x37de, 0x00},
+	{0x37df, 0x00},
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x07},
+	{0x3807, 0xa3},
+	{0x3808, 0x0a},
+	{0x3809, 0x20},
+	{0x380a, 0x07},
+	{0x380b, 0x98},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+	{0x3810, 0x00},
+	{0x3811, 0x10},
+	{0x3812, 0x00},
+	{0x3813, 0x06},
+	{0x3814, 0x11},
+	{0x3815, 0x11},
+	{0x3820, 0x42}, //0x00 Flip and Mirror
+	{0x3821, 0x18}, //0x1e Flip and Mirror
+	{0x3823, 0x00},
+	{0x3824, 0x00},
+	{0x3825, 0x00},
+	{0x3826, 0x00},
+	{0x3827, 0x00},
+	{0x382a, 0x04},
+	{0x3a04, 0x06},
+	{0x3a05, 0x14},
+	{0x3a06, 0x00},
+	{0x3a07, 0xfe},
+	{0x3b00, 0x00},
+	{0x3b02, 0x00},
+	{0x3b03, 0x00},
+	{0x3b04, 0x00},
+	{0x3b05, 0x00},
+	{0x3e07, 0x20},
+	{0x4000, 0x00},
+	{0x4001, 0x04},
+	{0x4002, 0x45},
+	{0x4004, 0x08},
+	{0x4005, 0x18},  //0x24(QCT) 1a:blc always 18:default
+	{0x4006, 0x20},
+	{0x4008, 0x20},
+	{0x4009, 0x40},
+	{0x400c, 0x00},
+	{0x400d, 0x00},
+	{0x4058, 0x00},
+	{0x404e, 0x37},
+	{0x404f, 0x8f},
+	{0x4058, 0x00},
+	{0x4101, 0xb2},
+	{0x4303, 0x00},
+	{0x4304, 0x08},
+	{0x4307, 0x30},
+	{0x4311, 0x04},
+	{0x4315, 0x01},
+	{0x4511, 0x05},
+	{0x4512, 0x01},
+	{0x4806, 0x00},
+	{0x4816, 0x52},
+	{0x481f, 0x30},
+	{0x4826, 0x2c},
+	{0x4831, 0x64},
+	{0x4d00, 0x04},
+	{0x4d01, 0x71},
+	{0x4d02, 0xfd},
+	{0x4d03, 0xf5},
+	{0x4d04, 0x0c},
+	{0x4d05, 0xcc},
+	{0x4837, 0x0a},
+	{0x5000, 0x06},
+	{0x5001, 0x01},
+	{0x5002, 0x00},
+	{0x5003, 0x20},
+	{0x5046, 0x0a},
+	{0x5013, 0x00},
+	{0x5046, 0x0a},
+	{0x5780, 0xfc},
+	{0x5781, 0x13},
+	{0x5782, 0x03},
+	{0x5786, 0x20},
+	{0x5787, 0x40},
+	{0x5788, 0x08},
+	{0x5789, 0x08},
+	{0x578a, 0x02},
+	{0x578b, 0x01},
+	{0x578c, 0x01},
+	{0x578d, 0x0c},
+	{0x578e, 0x02},
+	{0x578f, 0x01},
+	{0x5790, 0x01},
+	{0x5791, 0xff},
+	{0x5842, 0x01},
+	{0x5843, 0x2b},
+	{0x5844, 0x01},
+	{0x5845, 0x92},
+	{0x5846, 0x01},
+	{0x5847, 0x8f},
+	{0x5848, 0x01},
+	{0x5849, 0x0c},
+	{0x5e00, 0x00},
+	{0x5e10, 0x0c},
+#endif
+};
+
+static struct msm_camera_i2c_reg_conf ov5693_snap_settings[] = {
+#if 0 // from QCT Reference driver
+/* snapshot : 2592*1944 */
+	{0x3500, 0x00},
+	{0x3501, 0x7b},
+	{0x3502, 0x00},
+
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x07},
+	{0x3807, 0xa3},
+	{0x3808, 0x0a},
+	{0x3809, 0x20},
+	{0x380a, 0x07},
+	{0x380b, 0x98},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+
+	{0x5000, 0x06},
+	{0x5001, 0x01},
+	{0x5002, 0x00},
+#else
+// OV5693_Key_2592x1944_30fps_2lane
+	{0x3708, 0xe2},
+
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x07},
+	{0x3807, 0xa3},
+	{0x3808, 0x0a},
+	{0x3809, 0x20},
+	{0x380a, 0x07},
+	{0x380b, 0x98},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+	{0x3810, 0x00},
+	{0x3811, 0x10},
+	{0x3812, 0x00},
+	{0x3813, 0x06},
+	{0x3814, 0x11},
+	{0x3815, 0x11},
+	{0x3820, 0x42}, //0x00 Flip and Mirror
+	{0x3821, 0x18}, //0x1e Flip and Mirror
+
+	{0x4004, 0x08},
+#endif
+};
+
+/*                                                                                               */
+#if 0
+static struct msm_camera_i2c_reg_conf ov5693_prev_settings[] = {
+// OV5693_Key_1280x960_30FPS_2lane
+#if 0 // from QCT Reference driver
+/* preview : 1536 * 864 */
+	{0x3500, 0x00},
+	{0x3501, 0x5c},
+	{0x3502, 0xc0},
+
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0xec},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x06},
+	{0x3807, 0xab},
+	{0x3808, 0x06},
+	{0x3809, 0x00},
+	{0x380a, 0x03},
+	{0x380b, 0x60},
+	{0x380c, 0x0d},
+	{0x380d, 0xe0},
+	{0x380e, 0x05},
+	{0x380f, 0xdc},
+
+	{0x5000, 0x06},
+	{0x5001, 0x01},
+	{0x5002, 0x80},
+#else
+//OV5693_Key_1280x960_30FPS_2lane
+	{0x3708, 0xe6},
+
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x0a},
+	{0x3805, 0x3f},
+	{0x3806, 0x07},
+	{0x3807, 0xa3},
+	{0x3808, 0x05},
+	{0x3809, 0x00},
+	{0x380a, 0x03},
+	{0x380b, 0xc0},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+	{0x3810, 0x00},
+	{0x3811, 0x12},
+	{0x3812, 0x00},
+	{0x3813, 0x04},
+	{0x3814, 0x31},
+	{0x3815, 0x31},
+	{0x3820, 0x43}, //0x01 Flip and Mirror
+	{0x3821, 0x19}, //0x1f Flip and Mirror
+
+	{0x4004, 0x08},
+#endif
+};
+#endif
+/*                                                                                               */
+
+static struct msm_camera_i2c_reg_conf ov5693_video_settings[] = {
+#if 0 // from QCT Reference driver
+// Video register set was not included in QCT Reference driver
+#else
+/*                                                                                               */
+#if 0
+// OV5693_Key_1936x1088_30fps_2lane
+	{0x3708, 0xe2},
+
+	{0x3800, 0x01},
+	{0x3801, 0x5e},
+	{0x3802, 0x01},
+	{0x3803, 0xb0},
+	{0x3804, 0x08},
+	{0x3805, 0xe3},
+	{0x3806, 0x05},
+	{0x3807, 0xf3},
+	{0x3808, 0x07},
+	{0x3809, 0x80},
+	{0x380a, 0x04},
+	{0x380b, 0x40},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+	{0x3810, 0x00},
+	{0x3811, 0x02},
+	{0x3812, 0x00},
+	{0x3813, 0x02},
+	{0x3814, 0x11},
+	{0x3815, 0x11},
+	{0x3820, 0x42}, //0x00 Flip and Mirror
+	{0x3821, 0x18}, //0x1e Flip and Mirror
+
+	{0x4004, 0x08},
+#else
+// OV5693_Key_2560x1440_30fps_2lane
+	{0x3708, 0xe2},
+
+	{0x3800, 0x00},
+	{0x3801, 0x10},
+	{0x3802, 0x00},
+	{0x3803, 0xFe},
+	{0x3804, 0x0a},
+	{0x3805, 0x2f},
+	{0x3806, 0x06},
+	{0x3807, 0xa5},
+	{0x3808, 0x0a},
+	{0x3809, 0x00},
+	{0x380a, 0x05},
+	{0x380b, 0xa0},
+	{0x380c, 0x0a},
+	{0x380d, 0x80},
+	{0x380e, 0x07},
+	{0x380f, 0xc0},
+	{0x3810, 0x00},
+	{0x3811, 0x10},
+	{0x3812, 0x00},
+	{0x3813, 0x04},
+	{0x3814, 0x11},
+	{0x3815, 0x11},
+	{0x3820, 0x42}, //0x00 Flip and Mirror
+	{0x3821, 0x18}, //0x1e Flip and Mirror
+
+	{0x4004, 0x08},
+#endif
+/*                                                                                               */
+	#endif
 };
 
 static struct msm_camera_i2c_conf_array ov5693_init_conf[] = {
@@ -55,53 +756,121 @@ static struct msm_camera_i2c_conf_array ov5693_init_conf[] = {
 static struct msm_camera_i2c_conf_array ov5693_confs[] = {
 	{&ov5693_snap_settings[0],
 	ARRAY_SIZE(ov5693_snap_settings), 0, MSM_CAMERA_I2C_BYTE_DATA},
+/*                                                                                               */
+#if 0
 	{&ov5693_prev_settings[0],
 	ARRAY_SIZE(ov5693_prev_settings), 0, MSM_CAMERA_I2C_BYTE_DATA},
+#else
+	{&ov5693_snap_settings[0],
+	ARRAY_SIZE(ov5693_snap_settings), 0, MSM_CAMERA_I2C_BYTE_DATA},
+#endif	
+/*                                                                                               */
+	{&ov5693_video_settings[0],
+	ARRAY_SIZE(ov5693_video_settings), 0, MSM_CAMERA_I2C_BYTE_DATA},
 };
 
 static struct msm_sensor_output_info_t ov5693_dimensions[] = {
-	{ /* For SNAPSHOT */
+	/* snapshot : 2592*1944 */
+	{
 		.x_output = 0xA20,             /* 2592 */
 		.y_output = 0x798,             /* 1944 */
 		.line_length_pclk = 0xA80,     /* 2688 */
 		.frame_length_lines = 0x7C0,   /* 1984 */
 		.vt_pixel_clk = 160000000,
-		.op_pixel_clk = 320000000,
+		.op_pixel_clk = 160000000,
 		.binning_factor = 0x1,
 	},
+#if 0 // from QCT Reference driver
 	/* preview : 1536 * 864 */
 	{
-		.x_output = 0x600,             /* 1536 */
-		.y_output = 0x360,             /* 864 */
-		.line_length_pclk = 0xDE0,     /* 3552 */
+		.x_output = 0x600,			   /* 1536 */
+		.y_output = 0x360,			   /* 864 */
+		.line_length_pclk = 0xDE0,	   /* 3552 */
 		.frame_length_lines = 0x5DC,   /* 1500 */
 		.vt_pixel_clk = 160000000,
 		.op_pixel_clk = 320000000,
 		.binning_factor = 0x1,
 	},
-};
-
-static struct msm_camera_csid_vc_cfg ov5693_cid_cfg[] = {
-	{0, CSI_RAW10, CSI_DECODE_10BIT},
-};
-
-static struct msm_camera_csi2_params ov5693_csi_params = {
-	.csid_params = {
-		.lane_cnt = 2,
-		.lut_params = {
-			.num_cid = ARRAY_SIZE(ov5693_cid_cfg),
-			.vc_cfg = ov5693_cid_cfg,
-		},
+#else
+/*                                                                                               */
+#if 0	
+	/* preview : 1280 * 960 */
+	{
+		.x_output = 0x500,             /* 1280 */
+		.y_output = 0x3C0,             /* 960 */
+		.line_length_pclk = 0xA80,     /* 2592 */
+		.frame_length_lines = 0x7C0,   /* 1458 */
+		.vt_pixel_clk = 160000000,
+		.op_pixel_clk = 160000000,
+		.binning_factor = 0x1,
 	},
-	.csiphy_params = {
-		.lane_cnt = 2,
-		.settle_cnt = 0x07,
+#else
+	/* preview : 2592*1944 */
+	{
+		.x_output = 0xA20,             /* 2592 */
+		.y_output = 0x798,             /* 1944 */
+		.line_length_pclk = 0xA80,     /* 2688 */
+		.frame_length_lines = 0x7C0,   /* 1984 */
+		.vt_pixel_clk = 160000000,
+		.op_pixel_clk = 160000000,
+		.binning_factor = 0x1,
 	},
+#endif
+/*                                                                                               */
+#endif
+/*                                                                                               */
+#if 0
+	/* FHD video : 1920 * 1088 */
+	{
+		.x_output = 0x780,             /* 1920 */
+		.y_output = 0x440,             /* 1088 */
+		.line_length_pclk = 0xA80,     /* 2592 */
+		.frame_length_lines = 0x7C0,   /* 1458 */
+		.vt_pixel_clk = 160000000,
+		.op_pixel_clk = 160000000,
+		.binning_factor = 0x1,
+	},
+#else
+	/* FHD video : 2560 * 1440 */
+	{
+		.x_output = 0xA00,             /* 2560 */
+		.y_output = 0x5A0,             /* 1440 */
+		.line_length_pclk = 0xA80,     /* 2592 */
+		.frame_length_lines = 0x7C0,   /* 1458 */
+		.vt_pixel_clk = 160000000,
+		.op_pixel_clk = 160000000,
+		.binning_factor = 0x1,
+	},
+#endif
+/*                                                                                               */
 };
 
-static struct msm_camera_csi2_params *ov5693_csi_params_array[] = {
-	&ov5693_csi_params, /* Snapshot */
-	&ov5693_csi_params, /* Preview */
+static struct msm_camera_i2c_client ov5693_sensor_i2c_client = {
+	.addr_type = MSM_CAMERA_I2C_WORD_ADDR,
+};
+
+static struct v4l2_subdev_info ov5693_subdev_info[] = {
+	{
+		.code = V4L2_MBUS_FMT_SBGGR10_1X10,
+		.colorspace = V4L2_COLORSPACE_JPEG,
+		.fmt = 1,
+		.order = 0,
+	},
+	/* more can be supported, to be added later */
+};
+
+static struct v4l2_subdev_core_ops ov5693_subdev_core_ops = {
+	.ioctl = msm_sensor_subdev_ioctl,
+	.s_power = msm_sensor_power,
+};
+
+static struct v4l2_subdev_video_ops ov5693_subdev_video_ops = {
+	.enum_mbus_fmt = msm_sensor_v4l2_enum_fmt,
+};
+
+static struct v4l2_subdev_ops ov5693_subdev_ops = {
+	.core = &ov5693_subdev_core_ops,
+	.video  = &ov5693_subdev_video_ops,
 };
 
 static struct msm_sensor_output_reg_addr_t ov5693_reg_addr = {
@@ -123,7 +892,7 @@ static struct msm_sensor_exp_gain_info_t ov5693_exp_gain_info = {
 };
 
 static int32_t ov5693_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
-		uint16_t gain, uint32_t line)
+		uint16_t gain, uint32_t line, int32_t x, uint16_t y)
 {
 	uint32_t fl_lines, offset;
 	uint8_t int_time[3];
@@ -131,22 +900,23 @@ static int32_t ov5693_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
 	s_ctrl->func_tbl->sensor_group_hold_on(s_ctrl);
 
 	/* adjust the frame rate */
-	fl_lines = (s_ctrl->curr_frame_length_lines *
-		s_ctrl->fps_divider) / Q10;
+	fl_lines = (s_ctrl->curr_frame_length_lines * s_ctrl->fps_divider) / Q10;
 	offset = s_ctrl->sensor_exp_gain_info->vert_offset;
 	if (line > (fl_lines - offset))
 		fl_lines = line + offset;
 	fl_lines += (fl_lines & 0x1);
+
+	CDBG("gain:%d line:%d fl_line:%d\n", gain, line, fl_lines);
 
 	msm_camera_i2c_write(s_ctrl->sensor_i2c_client,
 		s_ctrl->sensor_output_reg_addr->frame_length_lines, fl_lines,
 		MSM_CAMERA_I2C_WORD_DATA);
 
 	/* exposure control */
-	line = line<<4;
-	int_time[0] = (u8) (line>>16);
-	int_time[1] = (u8) ((line & 0xFF00) >> 8);
-	int_time[2] = (u8) (line & 0x00FF);
+	line = line << 4;
+	int_time[0] = (uint8_t)(line >> 16);
+	int_time[1] = (uint8_t)((line & 0xFFFF) >> 8);
+	int_time[2] = (uint8_t)(line & 0xFF);
 
 	msm_camera_i2c_write_seq(s_ctrl->sensor_i2c_client,
 		s_ctrl->sensor_exp_gain_info->coarse_int_time_addr,
@@ -162,6 +932,16 @@ static int32_t ov5693_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
 	return 0;
 }
 
+#if 0 // from QCT Reference driver
+/*
+ * OTP
+ */
+#define OTP_LOAD_DUMP   0x3D81
+#define OTP_BANK_SELECT 0x3D84
+#define OTP_BANK_START  0x3D00
+#endif
+
+#if 0 // from QCT Reference driver
 static void ov5693_read_afcal(struct msm_sensor_ctrl_t *s_ctrl,
 	struct msm_calib_af *af_pos)
 {
@@ -184,7 +964,7 @@ static void ov5693_read_afcal(struct msm_sensor_ctrl_t *s_ctrl,
 
 	/* read 1m */
 	address += 2;
-/*	msm_camera_i2c_read_seq(s_ctrl->sensor_i2c_client, address, data, 2); */
+//	msm_camera_i2c_read_seq(s_ctrl->sensor_i2c_client, address, data, 2);
 
 	/* read mac */
 	address += 2;
@@ -198,69 +978,56 @@ static void ov5693_read_afcal(struct msm_sensor_ctrl_t *s_ctrl,
 
 	af_pos->start_dac = data[0] << 8 | data[1];
 
-	pr_info("* inf = 0x%x * mac = 0x%x * start = 0x%x",
-		af_pos->inf_dac, af_pos->macro_dac, af_pos->start_dac);
-
-	CDBG("OTP inf = 0x%x", af_pos->inf_dac);
-	CDBG("OTP mac = 0x%x", af_pos->macro_dac);
-	CDBG("OTP start = 0x%x", af_pos->start_dac);
+	pr_err("OTP inf = 0x%x", af_pos->inf_dac);
+	pr_err("OTP mac = 0x%x", af_pos->macro_dac);
+	pr_err("OTP start = 0x%x", af_pos->start_dac);
 }
+#endif
 
-static void ov5693_read_otp(struct msm_sensor_ctrl_t *s_ctrl)
+#if 0 // from QCT Reference driver
+static struct msm_calib_af ov5693_af_position;
+static void ov5693_read_opt(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	ov5693_read_afcal(s_ctrl, &ov5693_af_position);
 }
+#endif
 
 int32_t ov5693_sensor_setting(struct msm_sensor_ctrl_t *s_ctrl,
-	int update_type, int res)
+		int update_type, int res)
 {
 	int32_t rc = 0;
-	s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
-	msleep(30);
 
 	if (update_type == MSM_SENSOR_REG_INIT) {
-		s_ctrl->curr_csi_params = NULL;
+		s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
+		// Software reset
+		msm_camera_i2c_write(
+				s_ctrl->sensor_i2c_client,
+				0x103, 0x1,
+				MSM_CAMERA_I2C_BYTE_DATA);
+
 		msm_sensor_write_init_settings(s_ctrl);
 
 		msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x100, 0x1,
 			MSM_CAMERA_I2C_BYTE_DATA);
-		ov5693_read_otp(s_ctrl);
+
+#if 0 // from QCT Reference driver
+		ov5693_read_opt(s_ctrl);
 		msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x100, 0x0,
 		  MSM_CAMERA_I2C_BYTE_DATA);
+#endif
 
 	} else if (update_type == MSM_SENSOR_UPDATE_PERIODIC) {
 		msm_sensor_write_res_settings(s_ctrl, res);
-
-		if (s_ctrl->curr_csi_params != s_ctrl->csi_params[res]) {
-			s_ctrl->curr_csi_params = s_ctrl->csi_params[res];
-			s_ctrl->curr_csi_params->csid_params.lane_assign =
-				s_ctrl->sensordata->sensor_platform_info->
-				csi_lane_params->csi_lane_assign;
-			s_ctrl->curr_csi_params->csiphy_params.lane_mask =
-				s_ctrl->sensordata->sensor_platform_info->
-				csi_lane_params->csi_lane_mask;
-			v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
-				NOTIFY_CSID_CFG,
-				&s_ctrl->curr_csi_params->csid_params);
-			mb();
-			v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
-				NOTIFY_CSIPHY_CFG,
-				&s_ctrl->curr_csi_params->csiphy_params);
-			mb();
-			msleep(20);
-		}
-
 		v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
 			NOTIFY_PCLK_CHANGE, &s_ctrl->msm_sensor_reg->
 			output_settings[res].op_pixel_clk);
-		s_ctrl->func_tbl->sensor_start_stream(s_ctrl);
-		msleep(30);
 	}
 	return rc;
 }
 
+#if 0 // from QCT Reference driver
 void ov5693_get_af_calib(struct msm_sensor_ctrl_t *s_ctrl,
-	struct msm_calib_af *af)
+	struct msm_calib_af * af)
 {
 	af->inf_dac = ov5693_af_position.inf_dac;
 	af->macro_dac = ov5693_af_position.macro_dac;
@@ -270,488 +1037,26 @@ void ov5693_get_af_calib(struct msm_sensor_ctrl_t *s_ctrl,
 	CDBG("* mac = 0x%x", af->macro_dac);
 	CDBG("* start = 0x%x", af->start_dac);
 }
+#endif
 
 static const struct i2c_device_id ov5693_i2c_id[] = {
 	{SENSOR_NAME, (kernel_ulong_t)&ov5693_s_ctrl},
 	{ }
 };
-int sensor_read_reg(struct i2c_client *client, u16 addr, u16 *val)
-{
-	int err;
-	struct i2c_msg msg[2];
-	unsigned char data[4];
-	if (!client->adapter)
-		return -ENODEV;
-
-	msg[0].addr = 0x10;
-	msg[0].flags = 0;
-	msg[0].len = 2;
-	msg[0].buf = data;
-
-	/* high byte goes out first */
-	data[0] = (u8) (addr >> 8);
-	data[1] = (u8) (addr & 0xff);
-
-	msg[1].addr = 0x10;
-	msg[1].flags = I2C_M_RD;
-
-	msg[1].len = 1;
-	msg[1].buf = data + 2;
-
-	err = i2c_transfer(client->adapter, msg, 2);
-
-	if (err != 2)
-		return -EINVAL;
-
-	memcpy(val, data+2, 1);
-	*val=*val&0xff;
-
-	return 0;
-}
-
-int sensor_write_reg(struct i2c_client *client, u16 addr, u16 val)
-{
-	int err;
-	struct i2c_msg msg;
-	unsigned char data[4];
-	int retry = 0;
-	if (!client->adapter){
-		pr_info("%s client->adapter is null",__func__);
-		return -ENODEV;
-	}
-
-	data[0] = (u8) (addr >> 8);
-	data[1] = (u8) (addr & 0xff);
-	data[2] = (u8) (val & 0xff);
-
-	msg.addr = (client->addr)>>1;
-	msg.flags = 0;
-	msg.len = 3;
-	msg.buf = data;
-	do {
-		err = i2c_transfer(client->adapter, &msg, 1);
-		if (err == 1)
-			return 0;
-		retry++;
-		pr_err("yuv_sensor : i2c transfer failed, retrying %x %x\n",
-		       addr, val);
-	} while (retry <= SENSOR_MAX_RETRIES);
-
-	if(err == 0) {
-		pr_err("%s(%d): i2c_transfer error, but return 0!?\n",
-			__func__, __LINE__);
-		err = 0xAAAA;
-	}
-
-	return err;
-}
-
-static struct pm_gpio pm_isp_gpio_high = {
-	.direction		  = PM_GPIO_DIR_OUT,
-	.output_buffer	  = PM_GPIO_OUT_BUF_CMOS,
-	.output_value	  = 1,
-	.pull			  = PM_GPIO_PULL_NO,
-	.vin_sel		  = PM_GPIO_VIN_S4,
-	.out_strength	  = PM_GPIO_STRENGTH_HIGH,
-	.function		  = PM_GPIO_FUNC_PAIRED,
-	.inv_int_pol	  = 0,
-	.disable_pin	  = 0,
-};
-
-static struct pm_gpio pm_isp_gpio_low = {
-	.direction		  = PM_GPIO_DIR_OUT,
-	.output_buffer	  = PM_GPIO_OUT_BUF_CMOS,
-	.output_value	  = 0,
-	.pull			  = PM_GPIO_PULL_NO,
-	.vin_sel		  = PM_GPIO_VIN_S4,
-	.out_strength	  = PM_GPIO_STRENGTH_HIGH,
-	.function		  = PM_GPIO_FUNC_PAIRED,
-	.inv_int_pol	  = 0,
-	.disable_pin	  = 0,
-};
-
-static int ov5693_regulator_init(bool on)
-{
-	static struct regulator *reg_8921_dvdd, *reg_8921_l8, *reg_8921_l16;
-	int rc;
-
-	pr_info("%s +++\n",__func__);
-
-	if (on) {
-		pr_info("Turn on the regulators\n");
-		if(!reg_8921_dvdd){
-			reg_8921_dvdd = regulator_get(NULL, "8921_l23");
-			if (!IS_ERR(reg_8921_dvdd)) {
-				rc = regulator_set_voltage(reg_8921_dvdd, 1800000, 1800000);
-				if(rc){
-					pr_err("DVDD: reg_8921_dvdd regulator set_voltage failed, rc=%d--\n", rc);
-					goto reg_put_dvdd;
-				}
-			}
-		}
-		rc = regulator_enable(reg_8921_dvdd);
-		if (rc){
-			pr_err("DVDD regulator enable failed(%d)\n", rc);
-			goto reg_put_dvdd;
-		}
-		pr_info("DVDD enable(%d)\n", regulator_is_enabled(reg_8921_dvdd));
-
-		if (!reg_8921_l8) {
-			reg_8921_l8 = regulator_get(&ov5693_s_ctrl.sensor_i2c_client->client->dev, "8921_l8");
-			if (IS_ERR(reg_8921_l8)) {
-				pr_err("PTR_ERR(reg_8921_l8)=%ld\n", PTR_ERR(reg_8921_l8));
-				goto reg_put_l8;
-			}
-		}
-		rc = regulator_set_voltage(reg_8921_l8, 2800000, 2800000);
-		if(rc){
-			pr_err("AVDD: reg_8921_l8 regulator set_voltage failed, rc=%d--\n", rc);
-			goto reg_put_l8;
-		}
-		rc = regulator_enable(reg_8921_l8);
-		if(rc){
-			pr_err("AVDD: reg_8921_l8 regulator enable failed, rc=%d--\n", rc);
-			goto reg_put_l8;
-		}
-		pr_info("AVDD: reg_8921_l8(%d) enable(%d)\n", regulator_get_voltage(reg_8921_l8), regulator_is_enabled(reg_8921_l8));
-
-		if (!reg_8921_l16) {
-			reg_8921_l16 = regulator_get(&ov5693_s_ctrl.sensor_i2c_client->client->dev, "8921_l16");
-			if (IS_ERR(reg_8921_l16)) {
-				pr_err("PTR_ERR(reg_8921_l16)=%ld\n", PTR_ERR(reg_8921_l16));
-				goto reg_put_l16;
-			}
-		}
-		rc = regulator_set_voltage(reg_8921_l16, 2800000, 2800000);
-		if(rc){
-			pr_err("VCM_VDD: reg_8921_l16 regulator set_voltage failed, rc=%d--\n", rc);
-			goto reg_put_l16;
-		}
-		rc = regulator_enable(reg_8921_l16);
-		if(rc){
-			pr_err("VCM_VDD: reg_8921_l16 regulator enable failed, rc=%d--\n", rc);
-			goto reg_put_l16;
-		}
-		pr_info("VCM_VDD: reg_8921_l16(%d) enable(%d)\n", regulator_get_voltage(reg_8921_l16), regulator_is_enabled(reg_8921_l16));
-
-		return 0;
-	}
-	else {
-		pr_info("Turn off the regulators\n");
-
-		if(reg_8921_l16){
-			pr_info("Turn off the regulators VCM_VDD:reg_8921_l16\n");
-			regulator_put(reg_8921_l16);
-			regulator_disable(reg_8921_l16);
-			reg_8921_l16 = NULL;
-		}
-		if(reg_8921_l8){
-			pr_info("Turn off the regulators AVDD:reg_8921_l8\n");
-			regulator_put(reg_8921_l8);
-			regulator_disable(reg_8921_l8);
-			reg_8921_l8 = NULL;
-		}
-		if(reg_8921_dvdd){
-			pr_info("Turn off the regulators DVDD\n");
-			regulator_put(reg_8921_dvdd);
-			regulator_disable(reg_8921_dvdd);
-			reg_8921_dvdd = NULL;
-		}
-		return 0;
-	}
-
-reg_put_l16:
-	regulator_put(reg_8921_l16);
-	regulator_disable(reg_8921_l8);
-	reg_8921_l16 = NULL;
-
-reg_put_l8:
-	regulator_put(reg_8921_l8);
-	regulator_disable(reg_8921_dvdd);
-	reg_8921_l8 = NULL;
-
-reg_put_dvdd:
-	regulator_put(reg_8921_dvdd);
-	reg_8921_dvdd = NULL;
-
-	return rc;
-}
-
-static int ov5693_gpio_request(void)
-{
-	int32_t rc = 0;
-
-	pr_info("%s +++\n",__func__);
-	// OV5693 VCM_PD:
-	rc = gpio_request(PM8921_GPIO_PM_TO_SYS(25), "ov5693");
-	if (rc) {
-		pr_err("%s: gpio rear_mclk %d, rc(%d)fail\n",__func__, 25, rc);
-		goto init_probe_fail;
-		}
-	// OV5693 XSHUTDN:
-	rc = gpio_request(PM8921_GPIO_PM_TO_SYS(31), "ov5693");
-	if (rc) {
-		pr_err("%s: PMIC gpio PWDN %d, rc(%d)fail\n",__func__, 31, rc);
-		goto init_probe_fail;
-	}
-
-	pr_info("%s ---\n",__func__);
-	return rc;
-
-init_probe_fail:
-	pr_info("%s fail---\n",__func__);
-	return rc;
-}
-
-int32_t ov5693_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	int rc = 0;
-	pr_info("%s +++\n",__func__);
-
-	if(!s_ctrl->sensordata || !ov5693_s_ctrl.sensordata){
-		pr_err("ov5693_s_ctrl.sensordata is NULL, return\n");
-		pr_info("%s ---\n",__func__);
-		return -1;
-	}
-
-	// enable MCLK
-	msm_sensor_power_up(&ov5693_s_ctrl);
-
-	rc = ov5693_gpio_request();
-	if(rc < 0)	{
-		pr_err("5M Camera GPIO request fail!!\n");
-		pr_info("%s ---\n",__func__);
-		return -1;
-	}
-
-	//PMIC regulator - DOVDD 1.8V and AVDD 2.8V ON
-	rc = ov5693_regulator_init(true);
-	if(rc < 0){
-		pr_err("5M Camera regulator init fail!!\n");
-		pr_info("%s ---\n",__func__);
-		return -1;
-	}
-	//OV5693 VCM_PD
-	rc = pm8xxx_gpio_config(PM8921_GPIO_PM_TO_SYS(25), &pm_isp_gpio_high);
-	if (rc != 0)
-		pr_err("gpio 25 VCM_PD config high fail\n");
-	else
-		pr_info("gpio 25 VCM_PD(%d)\n",gpio_get_value(PM8921_GPIO_PM_TO_SYS(25)));
-	//OV5693 XSHUTDN
-	rc = pm8xxx_gpio_config(PM8921_GPIO_PM_TO_SYS(31), &pm_isp_gpio_high);
-	if (rc != 0)
-		pr_err("gpio 31 XSHUTDN config high fail\n");
-	else
-		pr_info("gpio 31 XSHUTDN(%d)\n",gpio_get_value(PM8921_GPIO_PM_TO_SYS(31)));
-
-	msleep(20);
-
-	pr_info("%s ---\n",__func__);
-	return 0;
-}
-
-int32_t ov5693_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	int rc = 0;
-
-	pr_info("%s +++\n",__func__);
-
-	if(!s_ctrl->sensordata || !ov5693_s_ctrl.sensordata){
-		pr_info("ov5693_s_ctrl.sensordata is NULL, return\n");
-		pr_info("%s ---\n",__func__);
-		return -1;
-	}
-
-	//XSHUTDOWN low
-	rc = pm8xxx_gpio_config(PM8921_GPIO_PM_TO_SYS(31), &pm_isp_gpio_low);
-	if (rc != 0)
-		pr_err("%s: XSHUTDOWN config low fail\n", __func__);
-		//VCM_PD low
-		rc = pm8xxx_gpio_config(PM8921_GPIO_PM_TO_SYS(25), &pm_isp_gpio_low);
-		if (rc != 0)
-			pr_err("%s: VCM_PD config low fail\n", __func__);
-
-	//PMIC regulator - DOVDD 1.8V and AVDD 2.8V OFF
-	ov5693_regulator_init(false);
-
-	//disable MCLK
-	msm_sensor_power_down(&ov5693_s_ctrl);
-
-	msleep(20);
-	gpio_free(PM8921_GPIO_PM_TO_SYS(31));
-	gpio_free(PM8921_GPIO_PM_TO_SYS(25));
-	pr_info("%s ---\n",__func__);
-	return 0;
-}
-
-int32_t ov5693_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	int32_t rc = 0;
-	uint16_t rdata = 0;
-
-	msm_camera_i2c_read(ov5693_s_ctrl.sensor_i2c_client, 0x300A,
-			&rdata, MSM_CAMERA_I2C_WORD_DATA);
-	if(rdata == ov5693_id_info.sensor_id)
-		rc = 0;
-	else
-		rc = -EIO;
-
-	pr_info("Sensor id: 0x%x\n", rdata);
-	return rc;
-}
-
-int32_t ov5693_sensor_read_vendor_id(struct msm_sensor_ctrl_t *s_ctrl)
-{
-	unsigned short rdata = 0, vendor_id;
-
-	sensor_write_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x0100, 0x01);
-	usleep(3000);
-	sensor_write_reg(ov5693_s_ctrl.sensor_i2c_client->client,
-		OTP_BANK_SELECT, 0xc1);
-	sensor_write_reg(ov5693_s_ctrl.sensor_i2c_client->client,
-		OTP_LOAD_DUMP, 0x01);
-	usleep(3000);
-	sensor_read_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x3D08,
-		&rdata);
-	sensor_read_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x3D09,
-		&vendor_id);
-	if (rdata == 2)
-		snprintf(s_ctrl->sensordata->vendor_name,
-			sizeof(s_ctrl->sensor_v4l2_subdev.name),
-			"%s", "B");
-	else if (rdata == 0) {
-		sensor_write_reg(ov5693_s_ctrl.
-			sensor_i2c_client->client, OTP_BANK_SELECT, 0xc2);
-		sensor_write_reg(ov5693_s_ctrl.
-			sensor_i2c_client->client, OTP_LOAD_DUMP, 0x01);
-		usleep(3000);
-		sensor_read_reg(ov5693_s_ctrl.
-			sensor_i2c_client->client, 0x3D08, &rdata);
-		sensor_read_reg(ov5693_s_ctrl.
-			sensor_i2c_client->client, 0x3D09, &vendor_id);
-		if (rdata == 2)
-			snprintf(s_ctrl->sensordata->vendor_name,
-				sizeof(s_ctrl->sensor_v4l2_subdev.name),
-				"%s", "B");
-		else if (rdata == 0) {
-			sensor_write_reg(ov5693_s_ctrl.
-				sensor_i2c_client->client,
-				OTP_BANK_SELECT, 0xc3);
-			sensor_write_reg(ov5693_s_ctrl.
-				sensor_i2c_client->client,
-				OTP_LOAD_DUMP, 0x01);
-			usleep(3000);
-			sensor_read_reg(ov5693_s_ctrl.
-				sensor_i2c_client->client, 0x3D08, &rdata);
-			sensor_read_reg(ov5693_s_ctrl.
-				sensor_i2c_client->client, 0x3D09, &vendor_id);
-			if (rdata == 2)
-				snprintf(s_ctrl->sensordata->vendor_name,
-					sizeof(s_ctrl->sensor_v4l2_subdev.name),
-					"%s", "B");
-		}
-	}
-	sensor_write_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x0100, 0x0);
-	usleep(3000);
-	pr_info("Module name: %s Vendor id: %d\n",
-		s_ctrl->sensordata->vendor_name, vendor_id);
-	return rdata;
-}
-
-int32_t ov5693_sensor_i2c_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
-{
-	int32_t rc = 0, vendor_id;
-	struct msm_sensor_ctrl_t *s_ctrl;
-	unsigned short rdata = 0;
-
-	pr_info("%s +++\n", __func__);
-
-	s_ctrl = (struct msm_sensor_ctrl_t *)(id->driver_data);
-	if (s_ctrl->sensor_i2c_client != NULL) {
-		s_ctrl->sensor_i2c_client->client = client;
-		if (s_ctrl->sensor_i2c_addr != 0)
-			s_ctrl->sensor_i2c_client->client->addr =
-				s_ctrl->sensor_i2c_addr;
-	} else {
-		rc = -EIO;
-		pr_err("%s ---\n", __func__);
-		return rc;
-	}
-
-	if (client->dev.platform_data == NULL) {
-		pr_err("%s: NULL sensor data\n", __func__);
-		return -EIO;
-	}
-
-	s_ctrl->sensordata = client->dev.platform_data;
-	ov5693_s_ctrl.sensordata = client->dev.platform_data;
-
-	rc = s_ctrl->func_tbl->sensor_power_up(&ov5693_s_ctrl);
-	if (rc < 0)
-		goto probe_fail;
-
-	sensor_read_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x300A, &rdata);
-	pr_info("Sensor id: 0x%x", rdata);
-	sensor_read_reg(ov5693_s_ctrl.sensor_i2c_client->client, 0x300B, &rdata);
-	pr_info("Sensor id: 0x%x", rdata);
-
-	vendor_id = ov5693_sensor_read_vendor_id(s_ctrl);
-	snprintf(s_ctrl->sensor_v4l2_subdev.name,
-		sizeof(s_ctrl->sensor_v4l2_subdev.name), "%s", id->name);
-	v4l2_i2c_subdev_init(&s_ctrl->sensor_v4l2_subdev, client,
-		s_ctrl->sensor_v4l2_subdev_ops);
-
-	msm_sensor_register(&s_ctrl->sensor_v4l2_subdev);
-
-	goto power_down;
-
-probe_fail:
-	pr_info("Sensor power on fail\n");
-
-power_down:
-	s_ctrl->func_tbl->sensor_power_down(&ov5693_s_ctrl);
-
-	pr_info("%s --- \n",__func__);
-	return rc;
-}
 
 static struct i2c_driver ov5693_i2c_driver = {
 	.id_table = ov5693_i2c_id,
-	.probe  = ov5693_sensor_i2c_probe,
+	.probe = msm_sensor_i2c_probe,
 	.driver = {
 		.name = SENSOR_NAME,
 	},
 };
 
-
-
-static struct msm_camera_i2c_client ov5693_sensor_i2c_client = {
-	.addr_type = MSM_CAMERA_I2C_WORD_ADDR,
-};
-
-void create_ov5693_proc_file(void);
-
 static int __init msm_sensor_init_module(void)
 {
-	create_ov5693_proc_file();
-	return  i2c_add_driver(&ov5693_i2c_driver);
+	pr_err("ov5693 module init !!!");
+	return i2c_add_driver(&ov5693_i2c_driver);
 }
-
-static struct v4l2_subdev_core_ops ov5693_subdev_core_ops = {
-	.ioctl = msm_sensor_subdev_ioctl,
-	.s_power = msm_sensor_power,
-};
-
-static struct v4l2_subdev_video_ops ov5693_subdev_video_ops = {
-	.enum_mbus_fmt = msm_sensor_v4l2_enum_fmt,
-};
-
-static struct v4l2_subdev_ops ov5693_subdev_ops = {
-	.core = &ov5693_subdev_core_ops,
-	.video  = &ov5693_subdev_video_ops,
-};
-
 
 static struct msm_sensor_fn_t ov5693_func_tbl = {
 	.sensor_start_stream = msm_sensor_start_stream,
@@ -765,13 +1070,14 @@ static struct msm_sensor_fn_t ov5693_func_tbl = {
 	.sensor_setting = ov5693_sensor_setting,
 	.sensor_set_sensor_mode = msm_sensor_set_sensor_mode,
 	.sensor_mode_init = msm_sensor_mode_init,
-	.sensor_match_id = ov5693_sensor_match_id,
 	.sensor_get_output_info = msm_sensor_get_output_info,
 	.sensor_config = msm_sensor_config,
-	.sensor_power_up = ov5693_sensor_power_up,
-	.sensor_power_down = ov5693_sensor_power_down,
+	.sensor_power_up = msm_sensor_power_up,
+	.sensor_power_down = msm_sensor_power_down,
 	.sensor_get_csi_params = msm_sensor_get_csi_params,
+#if 0 // from QCT Reference driver
 	.sensor_get_af_calib = ov5693_get_af_calib,
+#endif
 };
 
 static struct msm_sensor_reg_t ov5693_regs = {
@@ -783,8 +1089,7 @@ static struct msm_sensor_reg_t ov5693_regs = {
 	.group_hold_on_conf = ov5693_groupon_settings,
 	.group_hold_on_conf_size = ARRAY_SIZE(ov5693_groupon_settings),
 	.group_hold_off_conf = ov5693_groupoff_settings,
-	.group_hold_off_conf_size =
-		ARRAY_SIZE(ov5693_groupoff_settings),
+	.group_hold_off_conf_size = ARRAY_SIZE(ov5693_groupoff_settings),
 	.init_settings = &ov5693_init_conf[0],
 	.init_size = ARRAY_SIZE(ov5693_init_conf),
 	.mode_settings = &ov5693_confs[0],
@@ -795,12 +1100,12 @@ static struct msm_sensor_reg_t ov5693_regs = {
 static struct msm_sensor_ctrl_t ov5693_s_ctrl = {
 	.msm_sensor_reg = &ov5693_regs,
 	.sensor_i2c_client = &ov5693_sensor_i2c_client,
-	.sensor_i2c_addr =  0x20,
+	.sensor_i2c_addr = 0x20,
 	.sensor_output_reg_addr = &ov5693_reg_addr,
+	.wait_num_frames = 3*Q10,
 	.sensor_id_info = &ov5693_id_info,
 	.sensor_exp_gain_info = &ov5693_exp_gain_info,
 	.cam_mode = MSM_SENSOR_MODE_INVALID,
-	.csi_params = &ov5693_csi_params_array[0],
 	.msm_sensor_mutex = &ov5693_mut,
 	.sensor_i2c_driver = &ov5693_i2c_driver,
 	.sensor_v4l2_subdev_info = ov5693_subdev_info,
@@ -810,298 +1115,7 @@ static struct msm_sensor_ctrl_t ov5693_s_ctrl = {
 	.clk_rate = MSM_SENSOR_MCLK_24HZ,
 };
 
-#ifdef	CONFIG_PROC_FS
-#define	OV5693_PROC_CAMERA_STATUS	"driver/camera_status"
-static ssize_t ov5693_proc_read_camera_status(char *page, char **start, off_t off, int count,
-			int *eof, void *data)
-{
-	int len = 0, rc = 0;
-
-	ov5693_s_ctrl.func_tbl->sensor_power_up(&ov5693_s_ctrl);
-	rc = ov5693_s_ctrl.func_tbl->sensor_match_id(&ov5693_s_ctrl);
-	ov5693_s_ctrl.func_tbl->sensor_power_down(&ov5693_s_ctrl);
-
-	if(*eof == 0){
-		if(!rc)
-			len += sprintf(page+len, "1\n");
-		else
-			len += sprintf(page+len, "0\n");
-		*eof = 1;
-		pr_info("%s: string:%s", __func__, (char *)page);
-	}
-	return len;
-}
-void create_ov5693_proc_file(void)
-{
-	if(create_proc_read_entry(OV5693_PROC_CAMERA_STATUS, 0666, NULL,
-			ov5693_proc_read_camera_status, NULL) == NULL){
-		pr_err("[Camera]proc file create failed!\n");
-	}
-}
-
-void remove_ov5693_proc_file(void)
-{
-    pr_info("ov5693_proc_file\n");
-    remove_proc_entry(OV5693_PROC_CAMERA_STATUS, &proc_root);
-}
-#endif
-
 module_init(msm_sensor_init_module);
-MODULE_DESCRIPTION("Omnivision Bayer sensor driver");
+MODULE_DESCRIPTION("Omnivision 5MP Bayer sensor driver");
 MODULE_LICENSE("GPL v2");
-
-//Create debugfs for ov5693
-#define DBG_TXT_BUF_SIZE 256
-static char debugTxtBuf[DBG_TXT_BUF_SIZE];
-static unsigned int register_value = 0xffffffff;
-static int i2c_set_open(struct inode *inode, struct file *file)
-{
-    file->private_data = inode->i_private;
-    return 0;
-}
-
-static ssize_t i2c_camera(
-	struct file *file,
-	const char __user *buf,
-	size_t count,
-	loff_t *ppos)
-{
-    int len;
-    int arg[2];
-    int err;
-
-    if (*ppos)
-        return 0;    /* the end */
-
-//+ parsing......
-    len=( count > DBG_TXT_BUF_SIZE-1 ) ? ( DBG_TXT_BUF_SIZE-1 ) : (count);
-    if ( copy_from_user( debugTxtBuf, buf, len ) )
-        return -EFAULT;
-
-    debugTxtBuf[len] = 0; //add string end
-
-    sscanf(debugTxtBuf, "%x", &arg[0]);
-    pr_info("1 is open_camera 0 is close_camera\n");
-    pr_info("command is arg1=%x \n", arg[0]);
-
-    *ppos = len;
-
-    switch(arg[0])
-    {
-        case 0:
-        {
-            pr_info("ov5693 power_off\n");
-            err = ov5693_sensor_power_down(&ov5693_s_ctrl);
-            if(err)
-                return -ENOMEM;
-            break;
-        }
-        case 1:
-        {
-            pr_info("ov5693 power_on\n");
-            err = ov5693_sensor_power_up(&ov5693_s_ctrl);
-            if(err)
-                return -ENOMEM;
-            break;
-        }
-        case 2:
-        {
-            pr_info("ov5693 change vendor to A\n");
-            snprintf(ov5693_s_ctrl.sensordata->vendor_name,
-				sizeof(ov5693_s_ctrl.sensor_v4l2_subdev.name), "%s", "A");
-            break;
-        }
-        case 3:
-        {
-            pr_info("ov5693 change vendor to B\n");
-            snprintf(ov5693_s_ctrl.sensordata->vendor_name,
-				sizeof(ov5693_s_ctrl.sensor_v4l2_subdev.name), "%s", "B");
-            break;
-        }
-        default:
-            break;
-    }
-
-    return len;    /* the end */
-}
-
-static ssize_t i2c_camera_read(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
-{
-	int len;
-	u32 arg[2];
-
-	int err;
-	struct i2c_msg msg[2];
-	unsigned char data[4];
-	unsigned int val;
-
-	if (!ov5693_s_ctrl.sensor_i2c_client->client->adapter)
-		return -ENODEV;
-
-	if (*ppos)
-		return 0;    /* the end */
-
-//+ parsing......
-	len=( count > DBG_TXT_BUF_SIZE-1 ) ? ( DBG_TXT_BUF_SIZE-1 ) : (count);
-	if ( copy_from_user( debugTxtBuf, buf, len ) )
-		return -EFAULT;
-
-	debugTxtBuf[len] = 0; //add string end
-
-	sscanf(debugTxtBuf, "%x %x", &arg[0], &arg[1]);
-	pr_info("command is slave_address=%x addr=%x\n", arg[0], arg[1]);
-
-	msg[0].addr = arg[0];
-	msg[0].flags = 0;
-	msg[0].len = 2;
-	msg[0].buf = data;
-
-	if( arg[0] == 0x10 ){
-		/* high byte goes out first */
-		data[0] = (u8) (arg[1] >> 8);;
-		data[1] = (u8) (arg[1] & 0xff);
-
-		msg[1].addr = arg[0];
-		msg[1].flags = I2C_M_RD;
-		msg[1].len = 1;
-		msg[1].buf = data + 2;
-	}
-	else{
-		data[0] = (u8) (arg[1] & 0xff);;
-
-		msg[1].addr = arg[0];
-		msg[1].flags = I2C_M_RD;
-		msg[1].len = 1;
-		msg[1].buf = data + 1;
-	}
-
-	err = i2c_transfer(ov5693_s_ctrl.sensor_i2c_client->client->adapter, msg, 2);
-
-	if (err != 2)
-		return -EINVAL;
-
-	if( arg[0] == 0x10 )
-		val = data[2] & 0xFF;
-	else
-		val = data[1] & 0xFF;
-
-	register_value = val;
-	pr_info("register value: 0x%x\n", val);
-
-	*ppos = len;
-	return len;    /* the end */
-}
-
-static ssize_t i2c_camera_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
-{
-	int len;
-	u32 arg[3];
-	int err;
-	struct i2c_msg msg;
-	unsigned char data[4];
-	int retry = 0;
-
-	if (*ppos)
-		return 0;    /* the end */
-
-//+ parsing......
-	len=( count > DBG_TXT_BUF_SIZE-1 ) ? ( DBG_TXT_BUF_SIZE-1 ) : (count);
-	if ( copy_from_user( debugTxtBuf, buf, len ) )
-		return -EFAULT;
-
-	debugTxtBuf[len] = 0; //add string end
-
-	sscanf(debugTxtBuf, "%x %x %x", &arg[0], &arg[1], &arg[2]);
-	pr_info("command is slave_address=%x addr=%x value=%x\n", arg[0], arg[1], arg[2]);
-
-	if (!ov5693_s_ctrl.sensor_i2c_client->client->adapter){
-		pr_info("%s client->adapter is null",__func__);
-		return -ENODEV;
-	}
-
-	if( arg[0] == 0x10 ){
-		data[0] = (u8) (arg[1] >> 8);
-		data[1] = (u8) (arg[1] & 0xff);
-		data[2] = (u8) (arg[2] & 0xff);
-		msg.addr = arg[0];
-		msg.flags = 0;
-		msg.len = 3;
-		msg.buf = data;
-	}
-	else{
-		data[0] = (u8) (arg[1] & 0xff);
-		data[1] = (u8) (arg[2] & 0xff);
-		msg.addr = arg[0];
-		msg.flags = 0;
-		msg.len = 2;
-		msg.buf = data;
-	}
-
-	do {
-		err = i2c_transfer(ov5693_s_ctrl.sensor_i2c_client->client->adapter, &msg, 1);
-		if (err == 1){
-			*ppos = len;
-			return len;    /* the end */
-		}
-		retry++;
-		pr_err("yuv_sensor : i2c transfer failed, retrying %x %x\n",
-		arg[1], arg[2]);
-	} while (retry <= SENSOR_MAX_RETRIES);
-
-	*ppos = len;
-	return len;    /* the end */
-}
-
-static int i2c_read_value(struct file *file, char __user *buf, size_t count, loff_t *ppos)
-{
-	int len = 0;
-	char *bp = debugTxtBuf;
-
-	if (*ppos)
-		return 0;    /* the end */
-
-	len = snprintf(bp, DBG_TXT_BUF_SIZE, "Register value is 0x%X\n", register_value);
-
-	if (copy_to_user(buf, debugTxtBuf, len))
-		return -EFAULT;
-
-	*ppos += len;
-	return len;
-}
-
-static const struct file_operations i2c_open_camera = {
-	.open = i2c_set_open,
-	.write = i2c_camera,
-};
-
-static const struct file_operations i2c_read_register = {
-	.open = i2c_set_open,
-	.write = i2c_camera_read,
-};
-static const struct file_operations i2c_write_register = {
-	.open = i2c_set_open,
-	.write = i2c_camera_write,
-};
-static const struct file_operations read_register_value = {
-	.open = i2c_set_open,
-	.read = i2c_read_value,
-};
-
-static int __init qualcomm_i2c_debuginit(void)
-{
-	struct dentry *dent = debugfs_create_dir("ov5693_v4l2", NULL);
-
-	(void) debugfs_create_file("i2c_open_camera", S_IRUGO | S_IWUSR,
-			dent, NULL, &i2c_open_camera);
-	(void) debugfs_create_file("i2c_read", S_IRUGO | S_IWUSR,
-			dent, NULL, &i2c_read_register);
-	(void) debugfs_create_file("i2c_write", S_IRUGO | S_IWUSR,
-			dent, NULL, &i2c_write_register);
-	(void) debugfs_create_file("read_register_value", S_IRUGO | S_IWUSR,
-			dent, NULL, &read_register_value);
-
-	return 0;
-}
-
-late_initcall(qualcomm_i2c_debuginit);
 

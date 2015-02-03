@@ -11,3 +11,4 @@ obj-$(CONFIG_QPNP_PWM) += qpnp-pwm.o
 obj-$(CONFIG_QPNP_POWER_ON) += qpnp-power-on.o
 obj-$(CONFIG_QPNP_CLKDIV) += qpnp-clkdiv.o
 obj-$(CONFIG_PFT) += pft.o
+obj-y += avtimer.o
