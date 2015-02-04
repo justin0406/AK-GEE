@@ -631,15 +631,6 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 					cdata.rs);
 			break;
 
-		case CFG_SET_EFFECT:
-			// color effect by Jungki.kim
-			if (s_ctrl->func_tbl->sensor_special_effect== NULL) {
-				rc = -EFAULT;
-				break;
-			}
-			rc = s_ctrl->func_tbl->sensor_special_effect(s_ctrl, cdata.cfg.effect);
-			break;
-
 		case CFG_SET_EXPOSURE_COMPENSATION:
 			// Adjust Exposure by Jungki.kim
 			if (s_ctrl->func_tbl->sensor_exposure_compensation== NULL) {
@@ -785,18 +776,6 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 					sensor_hdr_update(
 					   s_ctrl,
 					   &(cdata.cfg.hdr_update_parm));
-			break;
-
-		case CFG_SET_EFFECT:
-			if (s_ctrl->func_tbl->
-			sensor_set_effect == NULL) {
-				rc = -EIO;
-				break;
-			}
-			rc = s_ctrl->func_tbl->
-				sensor_set_effect(
-					s_ctrl,
-					cdata.cfg.effect);
 			break;
 
 		case CFG_SENSOR_INIT:
@@ -984,30 +963,6 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			s_ctrl->func_tbl->sensor_set_exif_thumbnail_size(s_ctrl, &cdata.cfg.dimension);
 			break;
 /*                                                                  */
-
-		case CFG_SET_WB:
-			if (s_ctrl->func_tbl->
-			sensor_set_wb == NULL) {
-				rc = -EIO;
-				break;
-			}
-			rc = s_ctrl->func_tbl->
-				sensor_set_wb(
-					s_ctrl,
-					cdata.cfg.wb_val);
-			break;
-
-		case CFG_SET_EXPOSURE_COMPENSATION:
-			if (s_ctrl->func_tbl->
-			sensor_set_ev == NULL) {
-				rc = -EIO;
-				break;
-			}
-			rc = s_ctrl->func_tbl->
-				sensor_set_ev(
-					s_ctrl,
-					cdata.cfg.exp_compensation);
-			break;
 
 #ifndef CONFIG_MACH_APQ8064_MAKO
 		case CFG_GET_AF_CALIB:

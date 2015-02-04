@@ -527,9 +527,3 @@ void msm_gemini_io_dump(int size)
 	if (line_str[0] != '\0')
 		pr_err("%s\n", line_str);
 }
-#else
-void msm_gemini_io_dump(int size)
-{
-
-}
-#endif

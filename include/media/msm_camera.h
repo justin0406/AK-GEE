@@ -2445,4 +2445,4 @@ struct intf_mctl_mapping_cfg {
 #define SET_VIDEO_INST_IDX(handle, data)	\
 	(handle |= (0x1 << 7) | (data & 0x7F))
 
-#endif /* __LINUX_MSM_CAMERA_H */
+ /* __LINUX_MSM_CAMERA_H */
