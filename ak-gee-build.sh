@@ -15,7 +15,7 @@ DEFCONFIG="gee_defconfig"
 
 # Kernel Details
 BASE_AK_VER="AK"
-VER=".600.gee.aosp"
+VER=".v600.gee.stock"
 AK_VER="$BASE_AK_VER$VER"
 
 # AK Variables
