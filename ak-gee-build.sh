@@ -15,12 +15,12 @@ DEFCONFIG="gee_defconfig"
 
 # Kernel Details
 BASE_AK_VER="AK"
-VER=".v600.gee.stock"
+VER=".v600.gee"
 AK_VER="$BASE_AK_VER$VER"
 
 # AK Variables
 export LOCALVERSION=~`echo $AK_VER`
-export CROSS_COMPILE=${HOME}/kernel/arm-cortex_a15-linux-gnueabihf-linaro_4.9/bin/arm-cortex_a15-linux-gnueabihf-
+export CROSS_COMPILE=${HOME}/TOOLCHAIN/UBERTC-arm-eabi-4.9/bin/arm-eabi-
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER=Justin
@@ -31,8 +31,8 @@ KERNEL_DIR=`pwd`
 REPACK_DIR="${HOME}/kernel/GEE-AnyKernel"
 PATCH_DIR="${HOME}/kernel/GEE-AnyKernel/patch"
 MODULES_DIR="${HOME}/kernel/GEE-AnyKernel/patch/modules"
-ZIP_MOVE="${HOME}/kernel/AK/AK-releases/"
-ZIMAGE_DIR="${HOME}/kernel/AK/AK-GEE/arch/arm/boot"
+ZIP_MOVE="${HOME}/kernel/AK-releases/"
+ZIMAGE_DIR="${HOME}/kernel/GEE/arch/arm/boot"
 
 # Functions
 function clean_all {
